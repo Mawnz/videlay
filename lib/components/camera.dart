@@ -1,129 +1,184 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
+import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter/ffmpeg_session.dart';
+import 'package:intl/intl.dart';
 import 'package:camera/camera.dart';
-import 'package:permission_handler/permission_handler.dart';
 
-Future<bool> requestCameraPermission() async {
-  final status = await Permission.camera.request();
-  return status.isGranted;
-}
-
-class CameraSelector extends StatefulWidget {
-  final Function(CameraDescription, ResolutionPreset, int) onCameraSelected;
-
-  const CameraSelector({Key? key, required this.onCameraSelected})
-      : super(key: key);
-
-  @override
-  _CameraSelectorState createState() => _CameraSelectorState();
-}
-
-class _CameraSelectorState extends State<CameraSelector> {
-  List<CameraDescription>? _cameras;
-  CameraDescription? _selectedCamera;
-  ResolutionPreset _selectedResolution = ResolutionPreset.medium;
-  int _selectedFramerate = 30;
-
-  @override
-  void initState() {
-    super.initState();
-    _initCameras();
-  }
-
-  Future<void> _initCameras() async {
-    if (!await requestCameraPermission()) {
-      setState(() {
-        _cameras = [];
-      });
-      return;
-    }
-
-    try {
-      final cameras = await availableCameras();
-      setState(() {
-        _cameras = cameras;
-        if (_cameras != null && _cameras!.isNotEmpty) {
-          _selectedCamera = _cameras!.first;
-          widget.onCameraSelected(
-              _selectedCamera!, _selectedResolution, _selectedFramerate);
-        }
-      });
-    } catch (e) {
-      debugPrint("Error initializing cameras: $e");
-      setState(() {
-        _cameras = [];
-      });
+class FFmpegWrapper {
+  Process? _captureWindows;
+  FFmpegSession? _captureMobile;
+  // Function to get available cameras and their resolutions
+  Future<List<dynamic>> getAvailableCameras() async {
+    if (Platform.isWindows) {
+      return await _getAvailableCamerasWindows();
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      return await _getAvailableCamerasMobile();
+    } else {
+      throw UnsupportedError("Platform not supported");
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_cameras == null) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
-    }
+  // Function to start capturing video from a selected camera
+  Future<void> startCapture(String cameraName, DateTime dateTime,
+      {String extension = 'avi'}) async {
+    String timestamp = DateFormat('yyyyMMddTHHmmss').format(dateTime);
+    String outputFile = 'output_$timestamp.$extension';
 
-    if (_cameras!.isEmpty) {
-      return const Center(
-        child: Text("No cameras found."),
-      );
+    if (Platform.isWindows) {
+      await _startCaptureWindows(cameraName, outputFile);
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      await _startCaptureMobile(cameraName, outputFile);
+    } else {
+      throw UnsupportedError("Platform not supported");
     }
+  }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        DropdownButton<CameraDescription>(
-          value: _selectedCamera,
-          hint: const Text("Select Camera"),
-          items: _cameras!.map((camera) {
-            return DropdownMenuItem(
-              value: camera,
-              child: Text(camera.name),
-            );
-          }).toList(),
-          onChanged: (camera) {
-            setState(() {
-              _selectedCamera = camera;
-            });
-            widget.onCameraSelected(
-                _selectedCamera!, _selectedResolution, _selectedFramerate);
-          },
-        ),
-        DropdownButton<ResolutionPreset>(
-          value: _selectedResolution,
-          hint: const Text("Select Resolution"),
-          items: ResolutionPreset.values.map((resolution) {
-            return DropdownMenuItem(
-              value: resolution,
-              child: Text(resolution.toString().split('.').last),
-            );
-          }).toList(),
-          onChanged: (resolution) {
-            setState(() {
-              _selectedResolution = resolution!;
-            });
-            widget.onCameraSelected(
-                _selectedCamera!, _selectedResolution, _selectedFramerate);
-          },
-        ),
-        DropdownButton<int>(
-          value: _selectedFramerate,
-          hint: const Text("Select Framerate"),
-          items: [15, 30, 60].map((fps) {
-            return DropdownMenuItem(
-              value: fps,
-              child: Text("$fps FPS"),
-            );
-          }).toList(),
-          onChanged: (fps) {
-            setState(() {
-              _selectedFramerate = fps!;
-            });
-            widget.onCameraSelected(
-                _selectedCamera!, _selectedResolution, _selectedFramerate);
-          },
-        ),
-      ],
+  // Function to start capturing video from a selected camera
+  Future<void> stopCapture() async {
+    if (Platform.isWindows) {
+      _stopCaptureWindows();
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      await _stopCaptureMobile();
+    } else {
+      throw UnsupportedError("Platform not supported");
+    }
+  }
+
+  // Function to start streaming from a file, starting from a given timestamp
+  Future<void> startStream(String filePath, int startTimeInSeconds) async {
+    if (Platform.isWindows) {
+      await _startStreamWindows(filePath, startTimeInSeconds);
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      await _startStreamMobile(filePath, startTimeInSeconds);
+    } else {
+      throw UnsupportedError("Platform not supported");
+    }
+  }
+
+  List<String> parseFFMPEGOutputDevices(String stdout) {
+    print(stdout);
+    List<String> devices = [];
+    for (String row in stdout.split("\n")) {
+      if (row.indexOf('dshow') >= 0 && row.indexOf('video') >= 0) {
+        String name = row
+            .substring(row.indexOf(']') + 1, row.indexOf('(video)') - 1)
+            .replaceAll('\"', '')
+            .substring(1);
+        devices.add(name);
+      }
+    }
+    return devices;
+  }
+
+  // **Windows-specific implementation**
+  Future<List<String>> _getAvailableCamerasWindows() async {
+    final process = await Process.run(
+        'ffmpeg.exe', ['-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
+        workingDirectory: 'windows/ffmpeg/bin', runInShell: true);
+    return parseFFMPEGOutputDevices(process.stderr);
+  }
+
+  Future<void> _startCaptureWindows(
+      String cameraName, String outputFile) async {
+    _captureWindows = await Process.start(
+      'ffmpeg',
+      ['-y', '-f', 'dshow', '-i', 'video=$cameraName', outputFile],
+      workingDirectory: 'windows/ffmpeg',
     );
+
+    _captureWindows!.stdout.listen((data) {
+      print(String.fromCharCodes(data)); // Capture and log the output
+    });
+
+    _captureWindows!.stderr.listen((data) {
+      print("${String.fromCharCodes(data)}");
+    });
+
+    await _captureWindows!.exitCode;
+    print('Capture started on Windows with output: $outputFile');
+  }
+
+  void _stopCaptureWindows() {
+    if (_captureWindows != null) {
+      _captureWindows!.kill();
+    }
+  }
+
+  Future<void> _startStreamWindows(
+      String filePath, int startTimeInSeconds) async {
+    final process = await Process.start(
+      'ffmpeg',
+      [
+        '-ss',
+        '$startTimeInSeconds',
+        '-i',
+        filePath,
+        '-c:v',
+        'libx264',
+        'output_stream.mp4'
+      ],
+      workingDirectory: 'windows/ffmpeg',
+    );
+
+    process.stdout.listen((data) {
+      print(String.fromCharCodes(data)); // Capture and log the stream
+    });
+
+    process.stderr.listen((data) {
+      print("Error: ${String.fromCharCodes(data)}");
+    });
+
+    await process.exitCode;
+    print('Streaming started from file: $filePath');
+  }
+
+  // **Mobile-specific implementation**
+  Future<List<CameraDescription>> _getAvailableCamerasMobile() async {
+// Obtain a list of the available cameras on the device.
+    final cameras = await availableCameras();
+    return cameras;
+    // For Android/iOS, use FFmpeg-Kit to list available cameras (this part might need platform-specific implementation)
+    // const command = "-f android -list_devices true";
+    // FFmpegKit.execute(command).then((session) async {
+    //   final returnCode = await session.getReturnCode();
+    //   if (returnCode != null && returnCode.isValueSuccess()) {
+    //     print("Camera list retrieved successfully.");
+    //     // You can process the output to extract the camera names here
+    //   } else {
+    //     print("Failed to retrieve camera list.");
+    //   }
+    // });
+  }
+
+  Future<void> _startCaptureMobile(String cameraName, String outputFile) async {
+    final command = "-f android -i $cameraName -c:v libx264 $outputFile";
+    FFmpegKit.execute(command).then((session) async {
+      final returnCode = await session.getReturnCode();
+      if (returnCode != null && returnCode.isValueSuccess()) {
+        print('Capture started on mobile with output: $outputFile');
+      } else {
+        print("Capture failed on mobile.");
+      }
+    });
+  }
+
+  Future<void> _stopCaptureMobile() async {
+    if (_captureMobile != null) {
+      await _captureMobile!.cancel();
+    }
+  }
+
+  Future<void> _startStreamMobile(
+      String filePath, int startTimeInSeconds) async {
+    final command =
+        "-ss $startTimeInSeconds -i $filePath -c:v libx264 output_stream.mp4";
+    FFmpegKit.execute(command).then((session) async {
+      final returnCode = await session.getReturnCode();
+      if (returnCode != null && returnCode.isValueSuccess()) {
+        print('Streaming started from file: $filePath');
+      } else {
+        print("Streaming failed on mobile.");
+      }
+    });
   }
 }

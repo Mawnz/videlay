@@ -1,73 +1,114 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
+import 'package:videlay_app/components/preview.dart';
 import './camera.dart';
 
-class CameraCapture extends StatefulWidget {
+class CameraView extends StatefulWidget {
+  const CameraView({Key? key}) : super(key: key);
   @override
-  _CameraCaptureState createState() => _CameraCaptureState();
+  _CameraViewState createState() => _CameraViewState();
 }
 
-class _CameraCaptureState extends State<CameraCapture> {
-  CameraController? _controller;
-  CameraDescription? _selectedCamera;
-  ResolutionPreset _selectedResolution = ResolutionPreset.medium;
-  int _selectedFramerate = 30;
+class _CameraViewState extends State<CameraView> {
+  final FFmpegWrapper _camera = FFmpegWrapper();
+  String _deviceName = "";
+  List<String> _devicesWindows = [];
+  List<CameraDescription> _devicesMobile = [];
+  bool _started = false;
 
-  void _onCameraSelected(
-      CameraDescription camera, ResolutionPreset resolution, int framerate) {
-    _selectedCamera = camera;
-    _selectedResolution = resolution;
-    _selectedFramerate = framerate;
-    _initCamera();
+  @override
+  void initState() {
+    super.initState();
+    _initializeDevices();
   }
 
-  Future<void> _initCamera() async {
-    if (_selectedCamera == null) return;
+  Future<void> _initializeDevices() async {
+    // get devices
+    var devices = await _camera.getAvailableCameras();
+    setState(() {
+      if (Platform.isWindows) {
+        _devicesWindows = devices as List<String>;
+      } else {
+        _devicesMobile = devices as List<CameraDescription>;
+      }
+    });
+  }
 
-    _controller = CameraController(
-      _selectedCamera!,
-      _selectedResolution,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
-    );
+  void _startVideoStream() {
+    if (_deviceName.isNotEmpty) {
+      _camera.startCapture(_deviceName, DateTime.now());
+      setState(() {
+        _started = true;
+      });
+    }
+  }
 
-    await _controller!.initialize();
-
-    setState(() {});
+  void _stopVideoStream() {
+    if (_deviceName.isNotEmpty) {
+      _camera.stopCapture();
+      setState(() {
+        _started = false;
+      });
+    }
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    // todo release camera
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Camera Capture"),
-      ),
-      body: Column(
-        children: [
-          CameraSelector(
-            onCameraSelected: _onCameraSelected,
-          ),
-          Expanded(
-            child: _controller != null && _controller!.value.isInitialized
-                ? CameraPreview(_controller!)
-                : const Center(child: Text("Select a camera to start preview")),
-          ),
-          ElevatedButton(
-            onPressed: _controller != null && _controller!.value.isInitialized
-                ? () async {
-                    // Future feature: Start recording
-                  }
-                : null,
-            child: const Text("Start Capturing"),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text("Camera capture")),
+      body: Platform.isWindows
+          ? Center(
+              child: Column(
+              children: [
+                // Start capture
+                (_started
+                    ? Center(
+                        child: TextButton(
+                            onPressed: _stopVideoStream,
+                            child: const Text("Stop")),
+                      )
+                    : Center(
+                        child: TextButton(
+                            onPressed: _startVideoStream,
+                            child: const Text("Start")))),
+                // Select device
+                (_devicesWindows.length > 0
+                    ? DropdownMenu<String>(
+                        initialSelection: _devicesWindows.first,
+                        onSelected: (String? val) {
+                          if (val != null && val.isNotEmpty) {
+                            setState(() {
+                              _deviceName = val;
+                            });
+                          }
+                        },
+                        dropdownMenuEntries: _devicesWindows
+                            .map<DropdownMenuEntry<String>>((String val) {
+                          return DropdownMenuEntry<String>(
+                              value: val, label: val);
+                        }).toList(),
+                      )
+                    : const Center(child: Text("Loading devices..."))),
+              ],
+            ))
+          : (
+              _devicesMobile.length > 0
+                  ? Center(
+                      child: PreviewView(camera: _devicesMobile.first),
+                    )
+                  : Center(
+                      child: Text("Loading devices..."),
+                    )
+            ),
     );
   }
 }
