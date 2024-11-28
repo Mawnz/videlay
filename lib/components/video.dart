@@ -100,15 +100,13 @@ class _CameraViewState extends State<CameraView> {
                     : const Center(child: Text("Loading devices..."))),
               ],
             ))
-          : (
-              _devicesMobile.length > 0
-                  ? Center(
-                      child: PreviewView(camera: _devicesMobile.first),
-                    )
-                  : Center(
-                      child: Text("Loading devices..."),
-                    )
-            ),
+          : (_devicesMobile.length > 0
+              ? Center(
+                  child: PreviewView(camera: _devicesMobile.first),
+                )
+              : Center(
+                  child: Text("Loading devices..."),
+                )),
     );
   }
 }

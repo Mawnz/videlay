@@ -17,6 +17,7 @@ class PreviewView extends StatefulWidget {
 class _PreviewViewState extends State<PreviewView> {
   late CameraController _controller;
   late Future<void> _initializeControllerFuture;
+  bool _startedStream = false;
 
   @override
   void initState() {
@@ -27,11 +28,11 @@ class _PreviewViewState extends State<PreviewView> {
   Future<void> _initialize() async {
     // get devices
     _controller = CameraController(
-      // Get a specific camera from the list of available cameras.
-      widget.camera,
-      // Define the resolution to use.
-      ResolutionPreset.medium,
-    );
+        // Get a specific camera from the list of available cameras.
+        widget.camera,
+        // Define the resolution to use.
+        ResolutionPreset.high,
+        fps: 60);
 
     // Next, initialize the controller. This returns a Future.
     _initializeControllerFuture = _controller.initialize();
@@ -47,7 +48,6 @@ class _PreviewViewState extends State<PreviewView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Camera capture")),
       body: FutureBuilder<void>(
         future: _initializeControllerFuture,
         builder: (context, snapshot) {
@@ -70,10 +70,21 @@ class _PreviewViewState extends State<PreviewView> {
             await _initializeControllerFuture;
             // Attempt to take a picture and get the file `image`
             // where it was saved.
-            final image = await _controller.takePicture();
-
-            if (!context.mounted) return;
-
+            //final image = await _controller.takePicture();
+            //if (!context.mounted) return;
+            if (_startedStream) {
+              _controller.stopImageStream();
+              setState(() {
+                _startedStream = false;
+              });
+            } else {
+              _controller.startImageStream((image) => {
+                // save images
+              });
+              setState(() {
+                _startedStream = true;
+              });
+            }
           } catch (e) {
             // If an error occurs, log the error to the console.
             print(e);
